@@ -127,3 +127,12 @@ add dst-address=0.0.0.0/0 gateway=1.1.1.1 distance=2 scope=11 check-gateway=ping
 /tool netwatch
 add host=8.8.8.8 interval=5s timeout=2s
 add host=1.1.1.1 interval=5s timeout=2s
+```
+Cara Kerja:
+Router ping ke host eksternal (8.8.8.8 Google DNS) melalui ISP 1. Jika host eksternal tidak respon, berarti koneksi internet ISP 1 bermasalah (bukan hanya gateway). Route otomatis beralih ke ISP 2 yang ping ke 1.1.1.1 (Cloudflare DNS).
+Kelebihan: Mengecek koneksi internet sebenarnya, lebih akurat
+Kekurangan: Konfigurasi lebih kompleks, perlu memahami konsep scope dan recursive routing
+Perbedaan Utama:
+
+Simple failover hanya cek gateway ISP
+Recursive failover cek koneksi internet sampai ke host eksternal, lebih reliable
