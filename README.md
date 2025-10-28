@@ -41,6 +41,53 @@ Kombinasi dimana dua server aktif melayani traffic dengan load balancing, dan sa
 **Topologi:**
 
 ```
+Internet
+              |
+     ┌────────┴────────┐
+     |                 |
+ISP 1 (Primary)    ISP 2 (Backup)
+10.10.1.1          10.20.1.1
+     |                 |
+  Ether1           Ether2
+     |                 |
+     └────────┬────────┘
+              |
+      MikroTik Router
+              |
+          Ether3
+              |
+         Client
+     192.168.1.10
+```
+
+**Konfigurasi:**
+```
+/ip address
+add address=10.10.1.2/24 interface=ether1 comment="ISP1"
+add address=10.20.1.2/24 interface=ether2 comment="ISP2"
+add address=192.168.1.1/24 interface=ether3 comment="LAN"
+
+/ip firewall nat
+add chain=srcnat out-interface=ether1 action=masquerade
+add chain=srcnat out-interface=ether2 action=masquerade
+
+/ip route
+add dst-address=0.0.0.0/0 gateway=10.10.1.1 distance=1 check-gateway=ping
+add dst-address=0.0.0.0/0 gateway=10.20.1.1 distance=2 check-gateway=ping
+```
+
+**Cara Kerja:**
+Router ping langsung ke gateway ISP (10.10.1.1). Jika gateway tidak respon, route ISP 1 disabled dan traffic beralih ke ISP 2.
+
+**Kelebihan:** Konfigurasi sederhana dan cepat
+**Kekurangan:** Hanya mengecek gateway, tidak mengecek koneksi internet sebenarnya
+
+---
+
+### B. Recursive Failover (Netwatch)
+
+**Topologi:**
+```
            Internet
               |
      ┌────────┴────────┐
@@ -60,36 +107,23 @@ ISP 1 (Primary)    ISP 2 (Backup)
      192.168.1.10
 ```
 
-**Konfigurasi Failover:**
-
-**1. Set IP Address**
+**Konfigurasi:**
 ```
 /ip address
 add address=10.10.1.2/24 interface=ether1 comment="ISP1"
 add address=10.20.1.2/24 interface=ether2 comment="ISP2"
 add address=192.168.1.1/24 interface=ether3 comment="LAN"
-```
 
-**2. Set NAT**
-```
 /ip firewall nat
 add chain=srcnat out-interface=ether1 action=masquerade
 add chain=srcnat out-interface=ether2 action=masquerade
-```
 
-**3. Set Route Failover (Inti Konfigurasi)**
-```
 /ip route
-add dst-address=0.0.0.0/0 gateway=10.10.1.1 distance=1 check-gateway=ping
-add dst-address=0.0.0.0/0 gateway=10.20.1.1 distance=2 check-gateway=ping
-```
+add dst-address=8.8.8.8/32 gateway=10.10.1.1 scope=10 comment="Check-Host-ISP1"
+add dst-address=1.1.1.1/32 gateway=10.20.1.1 scope=10 comment="Check-Host-ISP2"
+add dst-address=0.0.0.0/0 gateway=8.8.8.8 distance=1 scope=11 check-gateway=ping
+add dst-address=0.0.0.0/0 gateway=1.1.1.1 distance=2 scope=11 check-gateway=ping
 
-**Penjelasan:**
-- Route pertama (distance=1) adalah jalur primary melalui ISP 1
-- Route kedua (distance=2) adalah jalur backup melalui ISP 2
-- `check-gateway=ping` membuat router otomatis ping gateway setiap 10 detik
-- Jika ISP 1 down, route otomatis beralih ke ISP 2
-- Jika ISP 1 hidup lagi, route otomatis kembali ke ISP 1
-
-**Cara Kerja:**
-Dalam kondisi normal, semua traffic client keluar melalui ISP 1. Router terus melakukan ping ke gateway 10.10.1.1. Jika ping gagal 2 kali berturut-turut (sekitar 20 detik), route ISP 1 otomatis disabled dan traffic langsung beralih ke ISP 2. Ketika ISP 1 kembali online, traffic otomatis failback ke ISP 1 karena distance-nya lebih kecil (prioritas lebih tinggi).
+/tool netwatch
+add host=8.8.8.8 interval=5s timeout=2s
+add host=1.1.1.1 interval=5s timeout=2s
