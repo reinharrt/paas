@@ -36,139 +36,60 @@ Kombinasi dimana dua server aktif melayani traffic dengan load balancing, dan sa
 
 ## 3. Contoh Konfigurasi Failover
 
-### Contoh 1: Failover Load Balancing ISP di MikroTik
+### Dual WAN Failover di MikroTik RouterOS
 
 **Topologi:**
 
 ```
-                    Internet
-                       |
-          ┌────────────┴────────────┐
-          |                         |
-      ISP 1 (Primary)           ISP 2 (Backup)
-    Gateway: 10.10.1.1        Gateway: 10.20.1.1
-          |                         |
-          |                         |
-      Ether1                    Ether2
-    (10.10.1.2/24)           (10.20.1.2/24)
-          |                         |
-          └────────────┬────────────┘
-                       |
-                 MikroTik Router
-                       |
-                   Ether3
-                (192.168.1.1/24)
-                       |
-                   Switch
-                       |
-              ┌────────┴────────┐
-              |                 |
-          Client 1          Client 2
-       (192.168.1.10)   (192.168.1.11)
+           Internet
+              |
+     ┌────────┴────────┐
+     |                 |
+ISP 1 (Primary)    ISP 2 (Backup)
+10.10.1.1          10.20.1.1
+     |                 |
+  Ether1           Ether2
+     |                 |
+     └────────┬────────┘
+              |
+      MikroTik Router
+              |
+          Ether3
+              |
+         Client
+     192.168.1.10
 ```
 
-**Keterangan:**
-- ISP 1 sebagai koneksi utama dengan bandwidth lebih besar
-- ISP 2 sebagai backup yang akan aktif otomatis jika ISP 1 down
-- Client menggunakan gateway 192.168.1.1 (MikroTik)
-- MikroTik melakukan monitoring kedua ISP secara berkala
+**Konfigurasi Failover:**
 
-**Konfigurasi:**
+**1. Set IP Address**
+```
+/ip address
+add address=10.10.1.2/24 interface=ether1 comment="ISP1"
+add address=10.20.1.2/24 interface=ether2 comment="ISP2"
+add address=192.168.1.1/24 interface=ether3 comment="LAN"
+```
 
-Langkah 1: Setting IP Address pada interface
-- Ether1 terhubung ke ISP 1: 10.10.1.2/24
-- Ether2 terhubung ke ISP 2: 10.20.1.2/24
-- Ether3 untuk LAN: 192.168.1.1/24
+**2. Set NAT**
+```
+/ip firewall nat
+add chain=srcnat out-interface=ether1 action=masquerade
+add chain=srcnat out-interface=ether2 action=masquerade
+```
 
-Langkah 2: Membuat routing table dengan distance berbeda
-- Route ISP 1: dst-address 0.0.0.0/0, gateway 10.10.1.1, distance 1, check-gateway ping
-- Route ISP 2: dst-address 0.0.0.0/0, gateway 10.20.1.1, distance 2, check-gateway ping
+**3. Set Route Failover (Inti Konfigurasi)**
+```
+/ip route
+add dst-address=0.0.0.0/0 gateway=10.10.1.1 distance=1 check-gateway=ping
+add dst-address=0.0.0.0/0 gateway=10.20.1.1 distance=2 check-gateway=ping
+```
 
-Distance yang lebih kecil memiliki prioritas lebih tinggi. ISP 1 dengan distance 1 akan digunakan secara default.
-
-Langkah 3: Enable check-gateway
-Check-gateway akan melakukan ping ke gateway secara berkala. Jika gateway ISP 1 tidak merespon, route tersebut akan dianggap down dan otomatis beralih ke ISP 2.
-
-Langkah 4: (Optional) Netwatch untuk monitoring lebih detail
-Buat netwatch yang melakukan ping ke host eksternal seperti 8.8.8.8 melalui masing-masing ISP untuk memastikan koneksi benar-benar berfungsi, bukan hanya gateway yang hidup.
+**Penjelasan:**
+- Route pertama (distance=1) adalah jalur primary melalui ISP 1
+- Route kedua (distance=2) adalah jalur backup melalui ISP 2
+- `check-gateway=ping` membuat router otomatis ping gateway setiap 10 detik
+- Jika ISP 1 down, route otomatis beralih ke ISP 2
+- Jika ISP 1 hidup lagi, route otomatis kembali ke ISP 1
 
 **Cara Kerja:**
-Dalam kondisi normal, semua traffic client akan keluar melalui ISP 1. MikroTik terus melakukan ping ke gateway 10.10.1.1. Jika gateway ISP 1 tidak merespon selama beberapa kali (biasanya 3-5 detik), route dengan distance 1 akan disabled otomatis. Traffic kemudian beralih ke route dengan distance 2 yaitu ISP 2. Ketika ISP 1 kembali online dan merespon ping, route distance 1 akan aktif kembali dan traffic akan failback ke ISP 1 secara otomatis.
-
-### Contoh 2: Failover Router dengan VRRP
-
-**Topologi:**
-
-```
-         Internet
-              |
-    ┌─────────┴──────────┐
-    |                    |
-Router A            Router B
-(Master)            (Backup)
-192.168.1.1        192.168.1.2
-    |                    |
-    └─────────┬──────────┘
-              |
-        Virtual IP
-      192.168.1.254
-              |
-         Switch
-              |
-    ┌─────────┼─────────┐
-    |         |         |
-Client 1  Client 2  Client 3
-```
-
-**Konfigurasi:**
-- Protocol: VRRP (Virtual Router Redundancy Protocol)
-- Virtual IP: 192.168.1.254 (gateway yang dipakai semua client)
-- Router A (Master): Priority 100
-- Router B (Backup): Priority 90
-- Advertisement interval: 1 detik
-
-Client menggunakan 192.168.1.254 sebagai gateway. Router A yang aktif mengirim advertisement terus-menerus. Jika Router B tidak menerima advertisement selama 3 detik, ia mengambil alih sebagai master dan menghandle semua traffic. Client tidak perlu mengubah konfigurasi apapun karena tetap menggunakan IP 192.168.1.254 yang sama.
-
-### Contoh 3: Failover Database dengan Hot Standby
-
-**Topologi:**
-
-```
-              Internet
-                  |
-            Load Balancer
-                  |
-        ┌─────────┴─────────┐
-        |                   |
-   Web Server 1         Web Server 2
-   192.168.10.10       192.168.10.11
-        |                   |
-        └─────────┬─────────┘
-                  |
-            Virtual IP
-          192.168.10.100
-                  |
-        ┌─────────┴─────────┐
-        |                   |
-   DB Primary           DB Secondary
-   192.168.10.20       192.168.10.21
-   (Active)            (Hot Standby)
-```
-
-**Konfigurasi:**
-- Virtual IP (VIP): 192.168.10.100 (digunakan aplikasi untuk koneksi database)
-- Primary DB: 192.168.10.20 (memiliki VIP saat aktif)
-- Secondary DB: 192.168.10.21 (standby, data sudah tersinkronisasi)
-- Heartbeat interval: 2 detik
-- Timeout threshold: 3 kali miss (6 detik)
-- Replikasi: Streaming replication real-time
-
-Ketika primary down, secondary mengambil VIP 192.168.10.100 dan menjadi master baru dalam hitungan detik. Aplikasi tetap konek ke IP yang sama tanpa perlu konfigurasi ulang. Data yang sudah direplikasi sebelumnya langsung tersedia.
-
----
-
-**Catatan Penting:**
-- Selalu test failover secara berkala untuk memastikan mekanisme berjalan dengan baik
-- Monitor log failover untuk mendeteksi false positive atau masalah jaringan
-- Pastikan data tersinkronisasi antara primary dan backup untuk menghindari data loss
-- Dokumentasikan prosedur manual failback jika automatic failback gagal
+Dalam kondisi normal, semua traffic client keluar melalui ISP 1. Router terus melakukan ping ke gateway 10.10.1.1. Jika ping gagal 2 kali berturut-turut (sekitar 20 detik), route ISP 1 otomatis disabled dan traffic langsung beralih ke ISP 2. Ketika ISP 1 kembali online, traffic otomatis failback ke ISP 1 karena distance-nya lebih kecil (prioritas lebih tinggi).
